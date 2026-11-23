@@ -1,0 +1,16 @@
+HTTP/2 200 
+date: Mon, 24 Aug 2026 12:53:10 GMT
+content-type: text/javascript; charset=utf-8
+content-length: 9240
+cache-control: max-age=14400
+content-disposition: inline; filename=liquid-glass.js
+etag: "1787502765.5622737-9240-3128103475"
+last-modified: Sun, 23 Aug 2026 16:32:45 GMT
+server: cloudflare
+accept-ranges: bytes
+cf-cache-status: REVALIDATED
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=iGm7NUM3t88Khzu%2FoBToFo0%2BmOmopyBXndfXphe7AFHuW0a3CpMM6rslregWDTJHoZXSXIyJRJiECyBsW1agdNkKrADgjFM42NKB0muE9tBCXq6aGQxDyHkTkbTi%2BDKX"}]}
+cf-ray: a3027f91ae064dc6-FRA
+alt-svc: h3=":443"; ma=86400
+
