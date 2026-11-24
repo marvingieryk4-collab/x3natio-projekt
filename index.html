@@ -20,49 +20,33 @@
 
     <div class="app-viewport">
         <!-- ============================================================
-             STAGE 1: AUTH GATE (DISCORD ROLE CHECK + SKIP)
+             STAGE 1: AUTH GATE (DISCORD ONLY — NO SKIP, NO DEV LOGIN)
              ============================================================ -->
         <div id="auth-stage">
             <div class="glass-card auth-card">
                 <img src="assets/x3_nation_logo.png" alt="X3 Nation" class="brand-hero-logo">
                 <h1 class="auth-title">X3 Nation Portal</h1>
-                <p class="auth-subtitle">Exklusiver Community-Zugang für Segway & Ninebot Piloten. Berechtigt sind Mitglieder ab <strong>Level 5</strong> (~1 Stunde Chat-Aktivität) sowie Inhaber der <strong>💎 Donator</strong>- oder <strong>🧪 Tester</strong>-Rolle.</p>
+                <p class="auth-subtitle">Zugang nur mit Discord-Anmeldung. Der Bot verknüpft dein Konto, um <strong>Name, Profilbild und Rollen</strong> auf dem X3 Nation Server zu prüfen. Das Portal ist für alle Discord-Mitglieder sichtbar — <strong>Firmware & Flashen</strong> sind ab <strong>Level 5</strong> (~1 Stunde Chat-Aktivität) oder mit der <strong>Donator</strong>- bzw. <strong>Tester</strong>-Rolle freigeschaltet.</p>
 
                 <div class="auth-actions">
                     <button type="button" id="btn-discord-login" class="glass-btn glass-btn-primary">
                         <img src="assets/discord_logo.png" alt="Discord" class="dc-btn-icon">
                         <span>Mit Discord anmelden</span>
                     </button>
-
-                    <div class="auth-divider">oder</div>
-
-                    <button type="button" id="btn-skip-auth" class="glass-btn">
-                        <span>Verifikation überspringen</span>
-                        <svg class="svg-icon" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-                    </button>
                 </div>
 
-                <!-- Dev Quick-Test Buttons -->
-                <div id="auth-test-tools" class="auth-test-tools" style="display:flex;flex-direction:column;align-items:center;margin-top:14px;width:100%;padding-top:12px;border-top:1px dashed rgba(255,255,255,0.08);">
-                    <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Schnelltest (Direkt-Login)</span>
-                    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;width:100%;">
-                        <button type="button" class="glass-btn btn-dev-login" data-dev-role="level5" style="padding:6px 12px;font-size:12px;flex:1;">⚡ Level 5</button>
-                        <button type="button" class="glass-btn btn-dev-login" data-dev-role="donator" style="padding:6px 12px;font-size:12px;flex:1;">💎 Donator</button>
-                        <button type="button" class="glass-btn btn-dev-login" data-dev-role="tester" style="padding:6px 12px;font-size:12px;flex:1;">🧪 Tester</button>
-                    </div>
+                <div class="auth-disclaimer">
+                    <div class="auth-disclaimer-title">Disclaimer / Haftungsausschluss</div>
+                    <p>Diese Firmware ist ausschließlich für die Nutzung auf <strong>eigenem Grund und Privatgelände</strong> (z. B. geschlossene Testgelände) bestimmt. Eine Nutzung im öffentlichen Straßenraum ist <strong>untersagt</strong>; dort gelten die gesetzlichen Vorgaben für Kleinkrafträume. Du flashst und fährst ausschließlich <strong>auf eigene Verantwortung</strong>. X3 Nation übernimmt keine Haftung für Schäden an Personen, Fahrzeugen, Dritten oder Eigentum, die aus der Nutzung dieser Software entstehen. Bitte beachte die lokalen Gesetze und die Zustimmung des Fahrzeughalters.</p>
                 </div>
 
                 <div id="auth-alert" class="auth-alert-box">
                     <svg class="svg-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-                    <span id="auth-alert-msg">Rollenprüfung aktiv.</span>
+                    <span id="auth-alert-msg">Verbinde dein Discord-Konto ...</span>
                 </div>
 
                 <div class="auth-footer-bar">
-                    <span>X3 Nation Platform v1.0</span>
-                    <button type="button" id="btn-open-settings" class="auth-config-btn">
-                        <svg class="svg-icon" viewBox="0 0 24 24" style="width:14px;height:14px;"><circle cx="12" cy="3" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                        <span>Discord Auth Setup</span>
-                    </button>
+                    <span>X3 Nation Platform v1.0 &middot; Discord Login erforderlich</span>
                 </div>
             </div>
         </div>
@@ -105,7 +89,7 @@
                         </div>
                         <div class="user-name-group">
                             <span id="user-display-name" class="user-name">X3 Operator</span>
-                            <span id="user-role-badge" class="user-role-tag">Bypass Mode</span>
+                            <span id="user-role-badge" class="user-role-tag">Discord Member</span>
                         </div>
                     </div>
 
@@ -246,6 +230,8 @@
                                     <span id="auto-partition-text">Auto: VCU Partition</span>
                                 </div>
 
+                                <span id="flash-access-notice" class="flash-access-notice" hidden>Firmware & Flashen ab Level 5 / Tester / Donator</span>
+
                                 <button type="button" id="btn-start-flash" class="glass-btn glass-btn-accent" style="padding:11px 28px;font-size:14px;font-weight:600;">
                                     <svg class="svg-icon" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
                                     <span>Flash starten</span>
@@ -342,8 +328,19 @@
                         Die Integration der neuen <strong>Ninebot F3 Serie</strong> ist vorbereitet. Controller- und Display-Firmwares werden in einem kommenden Update eingepflegt.
                     </p>
                 </div>
+
+                <div class="cockpit-disclaimer">
+                    <strong>Disclaimer:</strong> Nur auf Privatgelände / eigenem Grund und mit Zustimmung des Halters nutzen. Keine Nutzung im öffentlichen Straßenverkehr. Nutzung auf eigene Gefahr — keine Haftung für Schäden oder Folgen durch diese Firmware.
+                </div>
             </div>
         </div>
+    </div>
+
+    <!-- Persistent progress HUD: stays visible while scrolling on mobile -->
+    <div id="flash-hud" class="flash-hud" aria-live="polite">
+        <span id="hud-ring" class="hud-ring"></span>
+        <span id="hud-pct" class="hud-pct">0%</span>
+        <span id="hud-phase" class="hud-phase">Bereit</span>
     </div>
 
     <!-- ============================================================
@@ -375,56 +372,6 @@
                     <p style="font-size:13px;">Community Firmware-Builds, Liquid Glass Interface und Flasher-Architektur.</p>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <!-- ============================================================
-         MODAL: DISCORD CONFIGURATION
-         ============================================================ -->
-    <div id="modal-settings" class="glass-modal-overlay">
-        <div class="glass-card glass-modal-box">
-            <div class="modal-header">
-                <h3 class="modal-title">Discord Rollen-Gate Konfiguration</h3>
-                <button type="button" class="modal-close-btn" data-close-modal="settings">
-                    <svg class="svg-icon" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-            </div>
-
-            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;line-height:1.5;">
-                Freigabe-Kriterien: <strong>Level 50+</strong> (aus der Bot-Datenbank oder Rolle), <strong>💎 Donator</strong>-Rolle oder <strong>🧪 Tester</strong>-Rolle. Synchronisiert automatisch mit der <code>.env</code> des Bots.
-            </div>
-
-            <form id="discord-config-form">
-                <div class="input-group">
-                    <label class="input-label">Discord Client ID (Application ID)</label>
-                    <input type="text" id="cfg-client-id" class="glass-input" placeholder="z. B. 1574073012175634627">
-                </div>
-
-                <div class="input-group">
-                    <label class="input-label">Discord Client Secret</label>
-                    <input type="password" id="cfg-client-secret" class="glass-input" placeholder="Wird sicher auf dem Server gespeichert">
-                </div>
-
-                <div class="input-group">
-                    <label class="input-label">Discord Server ID (Guild ID)</label>
-                    <input type="text" id="cfg-guild-id" class="glass-input" placeholder="z. B. 123456789012345678">
-                </div>
-
-                <div class="input-group">
-                    <label class="input-label">Discord Bot Token (für automatische Rollen-Auflösung)</label>
-                    <input type="password" id="cfg-bot-token" class="glass-input" placeholder="Wird aus .env geladen oder hier eingetragen">
-                </div>
-
-                <div class="input-group">
-                    <label class="input-label">Mindest-Level (Standard: 50)</label>
-                    <input type="number" id="cfg-required-level" class="glass-input" placeholder="50" value="50">
-                </div>
-
-                <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">
-                    <button type="button" class="glass-btn" data-close-modal="settings">Abbrechen</button>
-                    <button type="submit" class="glass-btn glass-btn-primary">Speichern</button>
-                </div>
-            </form>
         </div>
     </div>
 

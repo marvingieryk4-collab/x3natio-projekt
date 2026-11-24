@@ -27,6 +27,7 @@
             type: 'vcu',
             size: 0
         },
+        canFlash: false,
         isFlashing: false
     };
 
@@ -35,11 +36,9 @@
         authStage: document.getElementById('auth-stage'),
         mainStage: document.getElementById('main-stage'),
         btnLoginDiscord: document.getElementById('btn-discord-login'),
-        btnSkipAuth: document.getElementById('btn-skip-auth'),
         btnLockSession: document.getElementById('btn-lock-session'),
         authAlert: document.getElementById('auth-alert'),
         authAlertMsg: document.getElementById('auth-alert-msg'),
-        btnOpenSettings: document.getElementById('btn-open-settings'),
         btnOpenCredits: document.getElementById('btn-open-credits'),
 
         // Top-Right User Profile
@@ -70,6 +69,7 @@
         // Firmware & Flashing
         presetCards: document.querySelectorAll('.preset-card'),
         autoPartitionText: document.getElementById('auto-partition-text'),
+        flashAccessNotice: document.getElementById('flash-access-notice'),
         btnStartFlash: document.getElementById('btn-start-flash'),
         
         // Circular Gauge
@@ -80,6 +80,12 @@
         flashPageCount: document.getElementById('flash-page-count'),
         flashPhaseBadge: document.getElementById('flash-phase-badge'),
 
+        // Persistent mobile progress HUD
+        flashHud: document.getElementById('flash-hud'),
+        hudRing: document.getElementById('hud-ring'),
+        hudPct: document.getElementById('hud-pct'),
+        hudPhase: document.getElementById('hud-phase'),
+
         // Collapsible Terminal
         terminalCollapsible: document.getElementById('terminal-collapsible'),
         terminalToggleHeader: document.getElementById('terminal-toggle-header'),
@@ -89,14 +95,7 @@
         btnClearLog: document.getElementById('btn-clear-log'),
 
         // Modals
-        modalCredits: document.getElementById('modal-credits'),
-        modalSettings: document.getElementById('modal-settings'),
-        discordConfigForm: document.getElementById('discord-config-form'),
-        cfgClientId: document.getElementById('cfg-client-id'),
-        cfgClientSecret: document.getElementById('cfg-client-secret'),
-        cfgGuildId: document.getElementById('cfg-guild-id'),
-        cfgBotToken: document.getElementById('cfg-bot-token'),
-        cfgRequiredLevel: document.getElementById('cfg-required-level')
+        modalCredits: document.getElementById('modal-credits')
     };
 
     /* ============================================================
@@ -143,6 +142,10 @@
         const offset = CIRCUMFERENCE - (pct / 100) * CIRCUMFERENCE;
         dom.gaugeCircleFill.style.strokeDashoffset = offset;
         dom.gaugePctNumber.textContent = `${pct}%`;
+
+        // Keep the percentage visible even when the gauge is scrolled off-screen.
+        if (dom.hudPct) dom.hudPct.textContent = `${pct}%`;
+        if (dom.hudRing) dom.hudRing.style.setProperty('--hud-pct', `${pct}%`);
     }
 
     /* ============================================================
@@ -151,7 +154,8 @@
     function enterCockpit(user) {
         state.authenticated = true;
         state.user = user;
-        
+        state.canFlash = !!user.canFlash;
+
         // Update User Profile in Navbar
         if (user.avatar_url) {
             dom.userAvatarImg.src = user.avatar_url;
@@ -161,8 +165,16 @@
             dom.userAvatarImg.style.display = 'none';
             dom.userAvatarFallback.style.display = 'block';
         }
-        dom.userDisplayName.textContent = user.global_name || user.username || 'X3 Operator';
-        dom.userRoleBadge.textContent = user.roleName || (user.verified ? 'Verified Member' : 'Bypass Mode');
+        dom.userDisplayName.textContent = user.global_name || user.username || 'Discord Member';
+        dom.userRoleBadge.textContent = user.roleName || 'Discord Member';
+
+        // Firmware & flashing are role-gated; the portal itself is not.
+        dom.btnStartFlash.disabled = !state.canFlash;
+        if (dom.flashAccessNotice) dom.flashAccessNotice.hidden = state.canFlash;
+        dom.presetCards.forEach(card => card.classList.toggle('locked', !state.canFlash));
+
+        if (dom.flashHud) dom.flashHud.classList.add('visible');
+        if (dom.hudPhase) dom.hudPhase.textContent = state.canFlash ? 'Bereit' : 'Keine Freigabe';
 
         // Animate Auth Gate to the left
         dom.authStage.classList.add('slide-out');
@@ -170,21 +182,34 @@
         // Animate Main Cockpit from the right into center
         setTimeout(() => {
             dom.mainStage.classList.add('active');
+            // Drop compositing layers after the animation: prevents disappearing
+            // percentage text on mobile browsers while scrolling.
+            dom.mainStage.style.willChange = 'auto';
+            dom.mainStage.style.filter = 'none';
             if (window.refreshLiquidGlass) {
                 window.refreshLiquidGlass();
             }
         }, 80);
 
-        log(`Sitzung autorisiert: ${user.username || 'X3 Operator'}`, 'success');
-        if (user.roleName) {
-            log(`Rolle verifiziert: ${user.roleName}`, 'info');
-        }
+        log(`Sitzung autorisiert: ${user.username || 'Discord Member'}`, 'success');
+        log(state.canFlash
+            ? `Flash-Freigabe bestätigt: ${user.roleName || 'berechtigt'}`
+            : 'Portal-Zugang aktiv. Flash-Freigabe ab Level 5 / Tester / Donator erforderlich.',
+            state.canFlash ? 'success' : 'warn');
+
+        if (state.canFlash) loadPresetFirmware('vcu');
+        else dom.flashStatusText.textContent = 'Firmware nur mit Level 5 / Tester / Donator verfügbar.';
     }
 
     function exitToAuth() {
         state.authenticated = false;
         state.user = null;
-        sessionStorage.removeItem('x3_session');
+        state.canFlash = false;
+        state.firmwareBytes = null;
+
+        if (dom.flashHud) dom.flashHud.classList.remove('visible');
+        dom.btnStartFlash.disabled = true;
+        if (dom.flashAccessNotice) dom.flashAccessNotice.hidden = true;
 
         // Reverse Slide Animation
         dom.mainStage.classList.remove('active');
@@ -201,53 +226,49 @@
     /* ============================================================
        Discord Authentication & Role Gate
        ============================================================ */
+    function showAuthError(reason) {
+        dom.authAlert.className = 'auth-alert-box auth-alert-error';
+        dom.authAlert.style.display = 'flex';
+
+        if (reason === 'not_configured') {
+            dom.authAlertMsg.textContent = 'Discord OAuth2 ist noch nicht konfiguriert. Bitte wende dich an die X3 Nation Administration.';
+        } else if (reason === 'access_denied') {
+            dom.authAlertMsg.textContent = 'Anmeldung bei Discord abgebrochen. Bitte versuche es erneut.';
+        } else {
+            dom.authAlertMsg.textContent = `Authentifizierungsfehler: ${reason}`;
+        }
+    }
+
     function checkUrlAuth() {
         const params = new URLSearchParams(window.location.search);
         const authStatus = params.get('auth');
-        
-        if (authStatus === 'success') {
-            const rawData = params.get('data');
-            let userData = { username: 'Discord Member', verified: true };
-            if (rawData) {
-                try {
-                    userData = JSON.parse(decodeURIComponent(rawData));
-                } catch (e) {}
-            }
-            sessionStorage.setItem('x3_session', JSON.stringify(userData));
+        const reason = params.get('reason');
+
+        if (window.location.pathname || window.location.search) {
             window.history.replaceState({}, document.title, window.location.pathname);
-            enterCockpit(userData);
-            return;
         }
 
         if (authStatus === 'error') {
-            const reason = params.get('reason') || 'unbekannt';
-            const user = params.get('user') || '';
-            const level = params.get('level') || '0';
-            window.history.replaceState({}, document.title, window.location.pathname);
-            
-            dom.authAlert.className = 'auth-alert-box auth-alert-error';
-            dom.authAlert.style.display = 'flex';
-            
-            if (reason === 'insufficient_permissions' || reason === 'missing_role') {
-                dom.authAlertMsg.innerHTML = `<strong>Zugriff verweigert (${escapeHtml(user)}):</strong> Du benötigst mindestens <strong>Level 5</strong> (~1h Chat-Aktivität), die <strong>💎 Donator</strong>- oder die <strong>🧪 Tester</strong>-Rolle auf dem X3 Nation Server. (Dein Level: ${escapeHtml(level)})`;
-            } else if (reason === 'not_in_server') {
-                dom.authAlertMsg.innerHTML = `<strong>Zugriff verweigert (${escapeHtml(user)}):</strong> Du bist noch kein Mitglied auf dem X3 Nation Discord Server. Bitte tritt zuerst dem Server bei.`;
-            } else if (reason === 'not_configured') {
-                dom.authAlertMsg.textContent = 'Discord OAuth2 ist noch nicht konfiguriert. Bitte öffne das Setup unten oder nutze "Überspringen".';
-            } else {
-                dom.authAlertMsg.textContent = `Authentifizierungsfehler: ${reason}`;
-            }
+            showAuthError(reason || 'unbekannt');
             return;
         }
 
-        // Check existing session in sessionStorage
-        const savedSession = sessionStorage.getItem('x3_session');
-        if (savedSession) {
-            try {
-                const user = JSON.parse(savedSession);
-                enterCockpit(user);
-            } catch (e) {}
-        }
+        // The only trusted source of identity is the server-side session cookie.
+        dom.authAlertMsg.textContent = 'Prüfe Discord-Sitzung ...';
+        fetch('/api/session', { credentials: 'same-origin' })
+            .then(r => r.json())
+            .then(res => {
+                if (res.user) {
+                    enterCockpit(res.user);
+                } else if (authStatus === 'success') {
+                    showAuthError('Sitzung abgelaufen. Bitte erneut mit Discord anmelden.');
+                } else {
+                    dom.authAlertMsg.textContent = 'Verbinde dein Discord-Konto ...';
+                }
+            })
+            .catch(() => {
+                if (authStatus === 'success') showAuthError('Sitzung konnte nicht gelesen werden.');
+            });
     }
 
     /* ============================================================
@@ -322,6 +343,10 @@
     function initPresets() {
         dom.presetCards.forEach(card => {
             card.addEventListener('click', () => {
+                if (!state.canFlash) {
+                    log('Firmware-Auswahl gesperrt: Level 5, Tester oder Donator erforderlich.', 'warn');
+                    return;
+                }
                 const preset = card.getAttribute('data-preset');
                 dom.presetCards.forEach(c => c.classList.remove('active'));
                 card.classList.add('active');
@@ -416,6 +441,11 @@
        Flashing Execution Pipeline (Fully Automatic Partition)
        ============================================================ */
     async function startFlash() {
+        if (!state.canFlash) {
+            log('Keine Flash-Freigabe: Level 5, Tester oder Donator Rolle erforderlich.', 'error');
+            alert('Flashen ist erst ab Level 5, Tester- oder Donator-Rolle freigeschaltet.');
+            return;
+        }
         if (!state.firmwareBytes || state.firmwareBytes.length === 0) {
             log('Keine Firmware geladen. Bitte wähle eine Firmware aus.', 'error');
             alert('Bitte wähle zuerst eine Firmware aus.');
@@ -444,6 +474,7 @@
                     state.firmwareBytes,
                     (phase) => {
                         dom.flashPhaseBadge.textContent = phase;
+                        if (dom.hudPhase) dom.hudPhase.textContent = phase;
                         dom.flashStatusText.textContent = `Phase: ${phase}`;
                         log(`OTA Phase: ${phase}`, 'ota');
                     },
@@ -462,6 +493,7 @@
                     },
                     onPhase: (phase) => {
                         dom.flashPhaseBadge.textContent = phase;
+                        if (dom.hudPhase) dom.hudPhase.textContent = phase;
                         dom.flashStatusText.textContent = `Phase: ${phase}`;
                         log(`OTA Phase: ${phase}`, 'ota');
                     },
@@ -476,12 +508,14 @@
 
             setGaugeProgress(100);
             dom.flashPhaseBadge.textContent = 'Fertig';
+            if (dom.hudPhase) dom.hudPhase.textContent = 'Fertig';
             dom.flashPhaseBadge.style.color = '#10b981';
             dom.flashStatusText.textContent = 'Flash erfolgreich abgeschlossen! Roller startet neu.';
             log('Flash erfolgreich abgeschlossen. Der Roller startet neu.', 'success');
             alert('Flash erfolgreich abgeschlossen! Der Roller startet nun neu.');
         } catch (err) {
             dom.flashPhaseBadge.textContent = 'Fehler';
+            if (dom.hudPhase) dom.hudPhase.textContent = 'Fehler';
             dom.flashPhaseBadge.style.color = '#ef4444';
             dom.flashStatusText.textContent = `Fehlgeschlagen: ${err.message}`;
             log(`Flash-Abbruch: ${err.message}`, 'error');
@@ -501,7 +535,6 @@
        Modals & Configuration Management
        ============================================================ */
     function initModals() {
-        // Credits Modal
         dom.btnOpenCredits.addEventListener('click', () => {
             dom.modalCredits.classList.add('active');
         });
@@ -511,74 +544,16 @@
                 dom.modalCredits.classList.remove('active');
             });
         });
-
-        // Settings Modal
-        dom.btnOpenSettings.addEventListener('click', async () => {
-            dom.modalSettings.classList.add('active');
-            try {
-                const resp = await fetch('/api/config');
-                if (resp.ok) {
-                    const cfg = await resp.json();
-                    if (dom.cfgClientId) dom.cfgClientId.value = cfg.clientId || '';
-                    if (dom.cfgGuildId) dom.cfgGuildId.value = cfg.guildId || '';
-                    if (dom.cfgRequiredLevel) dom.cfgRequiredLevel.value = cfg.requiredLevel || 50;
-                    if (dom.cfgBotToken && cfg.hasBotToken) {
-                        dom.cfgBotToken.placeholder = '●●●●●●●●●●●● (Aktiv geladen)';
-                    }
-                    if (dom.cfgClientSecret && cfg.hasSecret) {
-                        dom.cfgClientSecret.placeholder = '●●●●●●●●●●●● (Bereits gespeichert)';
-                    }
-                }
-            } catch (e) {}
-        });
-
-        document.querySelectorAll('[data-close-modal="settings"]').forEach(el => {
-            el.addEventListener('click', () => {
-                dom.modalSettings.classList.remove('active');
-            });
-        });
-
-        // Save Discord Config
-        dom.discordConfigForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const payload = {
-                clientId: dom.cfgClientId.value.trim(),
-                guildId: dom.cfgGuildId.value.trim(),
-                requiredLevel: parseInt(dom.cfgRequiredLevel.value.trim(), 10) || 50
-            };
-            if (dom.cfgClientSecret.value.trim()) {
-                payload.clientSecret = dom.cfgClientSecret.value.trim();
-            }
-            if (dom.cfgBotToken && dom.cfgBotToken.value.trim()) {
-                payload.botToken = dom.cfgBotToken.value.trim();
-            }
-
-            try {
-                const resp = await fetch('/api/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (resp.ok) {
-                    dom.modalSettings.classList.remove('active');
-                    alert('Discord & Bot Konfiguration erfolgreich synchronisiert und gespeichert.');
-                } else {
-                    alert('Fehler beim Speichern der Konfiguration.');
-                }
-            } catch (err) {
-                alert(`Fehler: ${err.message}`);
-            }
-        });
     }
 
     /* ============================================================
        Event Bindings & Initialization
        ============================================================ */
     function initEvents() {
-        // Discord Login Trigger with robust pre-flight check
+        // Discord is the only way in.
         dom.btnLoginDiscord.addEventListener('click', async () => {
             if (window.location.protocol === 'file:') {
-                alert('⚠️ Die Website wurde direkt als Datei geöffnet (file://).\n\nBitte starte die Website über "start_all.bat" oder "start_server.bat" und öffne "http://localhost:8080/" im Browser!\n\nAlternativ kannst du unten die Schnelltest-Buttons nutzen.');
+                alert('Die Website muss über den Webserver laufen: starte "start_all.bat" bzw. "start_server.bat" und öffne http://localhost:8080/');
                 return;
             }
 
@@ -587,11 +562,7 @@
                 if (resp.ok) {
                     const cfg = await resp.json();
                     if (!cfg.isConfigured) {
-                        const missing = (cfg.missingFields && cfg.missingFields.length > 0) ? cfg.missingFields.join(', ') : 'Client Secret & Server ID';
-                        dom.authAlert.className = 'auth-alert-box auth-alert-error';
-                        dom.authAlert.style.display = 'flex';
-                        dom.authAlertMsg.innerHTML = `<strong>Discord OAuth2 noch unvollständig:</strong> Es fehlt: <em>${missing}</em>.<br>Trage es im Setup ein oder nutze unten die <strong>Schnelltest-Buttons</strong>!`;
-                        dom.modalSettings.classList.add('active');
+                        showAuthError('not_configured');
                         return;
                     }
                 }
@@ -602,38 +573,11 @@
             window.location.href = '/api/discord/login';
         });
 
-        // Dev Quick-Test Buttons
-        document.querySelectorAll('.btn-dev-login').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const role = btn.getAttribute('data-dev-role');
-                if (window.location.protocol === 'file:') {
-                    const badgeMap = {
-                        'level5': 'Level 5 Pilot',
-                        'donator': '💎 Donator',
-                        'tester': '🧪 Tester'
-                    };
-                    const user = {
-                        username: `TestPilot_${role}`,
-                        global_name: `X3 Pilot (${badgeMap[role] || 'Level 5'})`,
-                        verified: true,
-                        level: 5,
-                        roleName: badgeMap[role] || 'Level 5 Pilot'
-                    };
-                    sessionStorage.setItem('x3_session', JSON.stringify(user));
-                    enterCockpit(user);
-                } else {
-                    window.location.href = `/api/discord/dev-login?role=${role}&level=5`;
-                }
-            });
-        });
-
-        // Skip Button Trigger (Instant Lateral Transition)
-        dom.btnSkipAuth.addEventListener('click', () => {
-            enterCockpit({ username: 'Operator', roleName: 'Bypass Mode', verified: true });
-        });
-
-        // Lock / Return to Auth
-        dom.btnLockSession.addEventListener('click', () => {
+        // Lock / Return to Auth (server-side logout)
+        dom.btnLockSession.addEventListener('click', async () => {
+            try {
+                await fetch('/api/logout', { credentials: 'same-origin' });
+            } catch (e) {}
             exitToAuth();
         });
 
@@ -677,13 +621,11 @@
         initPresets();
         initModals();
         
-        // Initialize gauge display to 0%
+        // Initialize gauge display to 0% (the HUD mirrors it while scrolling)
         setGaugeProgress(0);
+        dom.btnStartFlash.disabled = true;
 
-        // Load default preset (VCU)
-        loadPresetFirmware('vcu');
-
-        // Check Discord return parameters or cached session
+        // Restore identity from the server-side session only
         checkUrlAuth();
     });
 

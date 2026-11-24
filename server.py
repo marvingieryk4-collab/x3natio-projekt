@@ -2,7 +2,8 @@
 """
 X3 Nation Server
 Serves the Apple Liquid Glass web interface, provides Discord OAuth2 verification
-with Level 50, Donator, and Tester role gating, and serves firmware files.
+with Discord-only login, Level 5 / Tester / Donator role gating for firmware,
+and server-side sessions. Secrets are loaded from the bot .env outside the web root.
 """
 
 import os
@@ -11,9 +12,11 @@ import json
 import time
 import base64
 import sqlite3
+import secrets
 import urllib.request
 import urllib.parse
 import urllib.error
+from http.cookies import SimpleCookie
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
 PORT = 8080
@@ -21,6 +24,12 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
 BOT_DIR = os.path.join(BASE_DIR, '..', 'bot')
 BOT_ENV_FILE = os.path.join(BOT_DIR, '.env')
+
+# Server-side login sessions. The browser only receives an opaque HttpOnly cookie.
+# No user data or permissions are stored in localStorage / sessionStorage anymore.
+SESSION_COOKIE = 'x3_session'
+SESSION_TTL = 24 * 60 * 60
+SESSIONS = {}
 
 def parse_env_file(filepath):
     """Parse standard KEY=VALUE environment files."""
@@ -217,8 +226,10 @@ def get_guild_roles(guild_id, bot_token):
 
 def evaluate_user_access(user_info, member_info, cfg):
     """
-    Evaluates whether the user is eligible for access based on:
-    1. Level >= 50 (from Bot DB or Discord Level role)
+    Evaluates whether the user may use the firmware / flasher.
+    Every Discord-authenticated user may view the portal; only the users below
+    may download and flash firmware:
+    1. Level >= requiredLevel (from Bot DB or a Discord Level role)
     2. Donator role
     3. Tester role
     4. Staff/Admin/Owner bypass
@@ -289,14 +300,84 @@ def evaluate_user_access(user_info, member_info, cfg):
     return False, None, db_level, f"Requirements not met (Needs Level {req_level}, Donator or Tester)"
 
 class X3RequestHandler(SimpleHTTPRequestHandler):
+    def send_json(self, status, payload):
+        body = json.dumps(payload).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def redirect_to(self, url):
+        self.send_response(302)
+        self.send_header('Location', url)
+        self.send_header('Cache-Control', 'no-store')
+        self.end_headers()
+
+    def is_secure_request(self, cfg):
+        forwarded = self.headers.get('X-Forwarded-Proto', '').lower()
+        return forwarded == 'https' or self.get_redirect_uri(cfg).startswith('https://')
+
+    def get_session_user(self):
+        raw = self.headers.get('Cookie', '')
+        if not raw:
+            return None
+        try:
+            cookie = SimpleCookie()
+            cookie.load(raw)
+            morsel = cookie.get(SESSION_COOKIE)
+            if not morsel:
+                return None
+            token = morsel.value
+            session = SESSIONS.get(token)
+            if not session:
+                return None
+            if session['expires'] < time.time():
+                SESSIONS.pop(token, None)
+                return None
+            return session['user']
+        except Exception:
+            return None
+
+    def create_session(self, user, cfg):
+        token = secrets.token_urlsafe(32)
+        SESSIONS[token] = {"user": user, "expires": time.time() + SESSION_TTL}
+        cookie = f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_TTL}; HttpOnly; SameSite=Lax"
+        if self.is_secure_request(cfg):
+            cookie += "; Secure"
+        return cookie
+
+    def clear_session(self):
+        raw = self.headers.get('Cookie', '')
+        if raw:
+            try:
+                cookie = SimpleCookie()
+                cookie.load(raw)
+                morsel = cookie.get(SESSION_COOKIE)
+                if morsel:
+                    SESSIONS.pop(morsel.value, None)
+            except Exception:
+                pass
+        return f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+
+    def is_sensitive_path(self, path):
+        lower = path.lower()
+        return (
+            lower in ('/config.json', '/.env', '/server.py')
+            or lower.startswith('/bot/')
+            or lower.endswith('.env')
+        )
+
     def get_redirect_uri(self, cfg):
         discord_cfg = cfg.get("discord", {})
-        configured_uri = discord_cfg.get("redirectUri", "").strip()
-        host = self.headers.get('Host', f'localhost:{PORT}')
-        # If no explicit non-localhost URI is configured, dynamically use current request host
-        if not configured_uri or "localhost:8080" in configured_uri:
-            return f"http://{host}/api/discord/callback"
-        return configured_uri
+        host_header = self.headers.get('Host', '').lower()
+        host = host_header.split(':')[0]
+        # Production domain: x3nation.de
+        if host in ['x3nation.de', 'www.x3nation.de']:
+            return "https://x3nation.de/api/discord/callback"
+        # Local / LAN dynamic fallback
+        raw_host = host_header or f'localhost:{PORT}'
+        return f"http://{raw_host}/api/discord/callback"
 
     def end_headers(self):
         # Enable CORS and caching headers
@@ -315,89 +396,66 @@ class X3RequestHandler(SimpleHTTPRequestHandler):
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
 
+        # Never serve secrets or server code as static files.
+        if self.is_sensitive_path(path):
+            self.send_error(404, 'Not Found')
+            return
+
         if path == '/api/config':
             cfg = load_config()
             discord_cfg = cfg.get("discord", {})
-            redirect_uri = self.get_redirect_uri(cfg)
-            client_id = discord_cfg.get("clientId", "")
+            client_id = discord_cfg.get("clientId", "1574073012175634627")
             has_secret = bool(discord_cfg.get("clientSecret"))
-            guild_id = discord_cfg.get("guildId", "")
-            has_bot_token = bool(discord_cfg.get("botToken"))
-            is_configured = bool(client_id and has_secret and guild_id)
-
-            safe_config = {
+            self.send_json(200, {
                 "clientId": client_id,
-                "guildId": guild_id,
-                "hasSecret": has_secret,
-                "hasBotToken": has_bot_token,
+                "guildId": discord_cfg.get("guildId", "1573877864636616896"),
                 "requiredLevel": discord_cfg.get("requiredLevel", 5),
-                "redirectUri": redirect_uri,
-                "isConfigured": is_configured,
-                "missingFields": [
-                    f for f, has in [
-                        ("Client ID", bool(client_id)),
-                        ("Client Secret", has_secret),
-                        ("Server ID (Guild ID)", bool(guild_id))
-                    ] if not has
-                ]
-            }
-            self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(safe_config).encode('utf-8'))
+                "isConfigured": bool(client_id and has_secret),
+                "discordOnly": True
+            })
             return
 
-        elif path == '/api/discord/dev-login':
-            # Instant test login for development & testing
-            role = query.get('role', ['tester'])[0].lower()
-            lvl = int(query.get('level', ['5'])[0]) if query.get('level', ['5'])[0].isdigit() else 5
-            badge_map = {
-                'donator': '💎 Donator',
-                'tester': '🧪 Tester',
-                'level5': 'Level 5 Pilot',
-                'owner': '👑 Owner'
-            }
-            badge = badge_map.get(role, f'Level {lvl} Pilot')
-            u_data = urllib.parse.quote(json.dumps({
-                "username": f"TestPilot_{role}",
-                "global_name": f"X3 Pilot ({badge})",
-                "id": "1234567890",
-                "avatar": None,
-                "avatar_url": None,
-                "verified": True,
-                "level": lvl,
-                "roleName": badge,
-                "authReason": f"Test Mode: {badge}"
-            }))
+        if path == '/api/session':
+            user = self.get_session_user()
+            self.send_json(200, {"user": user})
+            return
+
+        if path == '/api/logout':
+            cookie = self.clear_session()
             self.send_response(302)
-            self.send_header('Location', f'/?auth=success&data={u_data}')
+            self.send_header('Location', '/')
+            self.send_header('Set-Cookie', cookie)
             self.end_headers()
             return
+
+        # Firmware files are only available to authorized roles.
+        if path.startswith('/firmware/'):
+            user = self.get_session_user()
+            if not user:
+                self.send_json(401, {"error": "Discord-Anmeldung erforderlich."})
+                return
+            if not user.get('canFlash'):
+                self.send_json(403, {"error": "Für Firmware/Flasher ist Level 5, Tester oder Donator erforderlich."})
+                return
 
         elif path == '/api/discord/login':
             cfg = load_config()
             discord_cfg = cfg.get("discord", {})
-            client_id = discord_cfg.get("clientId")
-            redirect_uri = self.get_redirect_uri(cfg)
+            client_id = discord_cfg.get("clientId", "1574073012175634627")
 
-            if not client_id or not discord_cfg.get("clientSecret"):
-                self.send_response(302)
-                self.send_header('Location', '/?auth=error&reason=not_configured')
-                self.end_headers()
+            if not discord_cfg.get("clientSecret"):
+                self.redirect_to('/?auth=error&reason=not_configured')
                 return
 
-            # OAuth2 scopes: identify (name, profilbild, id), guilds (servers), guilds.members.read (server rollen)
             params = {
                 "client_id": client_id,
                 "response_type": "code",
-                "redirect_uri": redirect_uri,
+                "redirect_uri": self.get_redirect_uri(cfg),
                 "scope": "identify guilds guilds.members.read",
                 "prompt": "consent"
             }
             discord_auth_url = f"https://discord.com/oauth2/authorize?{urllib.parse.urlencode(params)}"
-            self.send_response(302)
-            self.send_header('Location', discord_auth_url)
-            self.end_headers()
+            self.redirect_to(discord_auth_url)
             return
 
         elif path == '/api/discord/callback':
@@ -407,10 +465,8 @@ class X3RequestHandler(SimpleHTTPRequestHandler):
             code = query.get('code', [None])[0]
 
             if not code:
-                err = query.get('error_description', ['Abgebrochen oder kein Code erhalten'])[0]
-                self.send_response(302)
-                self.send_header('Location', f'/?auth=error&reason={urllib.parse.quote(err)}')
-                self.end_headers()
+                err = query.get('error_description', ['Anmeldung bei Discord abgebrochen.'])[0]
+                self.redirect_to(f'/?auth=error&reason={urllib.parse.quote(err)}')
                 return
 
             try:
@@ -445,8 +501,10 @@ class X3RequestHandler(SimpleHTTPRequestHandler):
                 user_id = user_info.get("id")
                 username = user_info.get("username", "Member")
 
-                # Check membership in the specified guild
+                # Roles live on the X3 Nation server. Read the member object via
+                # the user token, with the bot token as fallback for role lookup.
                 member_info = {"roles": []}
+                in_server = False
                 if guild_id:
                     member_req = urllib.request.Request(
                         f"https://discord.com/api/v10/users/@me/guilds/{guild_id}/member",
@@ -455,79 +513,60 @@ class X3RequestHandler(SimpleHTTPRequestHandler):
                     try:
                         with urllib.request.urlopen(member_req) as resp:
                             member_info = json.loads(resp.read().decode('utf-8'))
+                            in_server = True
                     except urllib.error.HTTPError as e:
-                        if e.code in [404, 403]:
-                            self.send_response(302)
-                            self.send_header('Location', f'/?auth=error&reason=not_in_server&user={urllib.parse.quote(username)}')
-                            self.end_headers()
-                            return
-                        raise
+                        if e.code not in (404, 403):
+                            raise
 
-                # Evaluate Access
-                has_access, role_badge, user_lvl, eval_reason = evaluate_user_access(user_info, member_info, cfg)
+                # Any Discord login may view the portal. Only these roles may flash.
+                can_flash, role_badge, user_lvl, eval_reason = evaluate_user_access(user_info, member_info, cfg)
 
-                if has_access:
-                    avatar_hash = user_info.get("avatar")
-                    avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=128" if avatar_hash else None
-                    u_data = urllib.parse.quote(json.dumps({
-                        "username": user_info.get("username"),
-                        "global_name": user_info.get("global_name", user_info.get("username")),
-                        "id": user_id,
-                        "avatar": avatar_hash,
-                        "avatar_url": avatar_url,
-                        "verified": True,
-                        "level": user_lvl,
-                        "roleName": role_badge or "X3 Pilot",
-                        "authReason": eval_reason
-                    }))
-                    self.send_response(302)
-                    self.send_header('Location', f'/?auth=success&data={u_data}')
-                    self.end_headers()
-                    return
-                else:
-                    self.send_response(302)
-                    self.send_header('Location', f'/?auth=error&reason=insufficient_permissions&user={urllib.parse.quote(username)}&level={user_lvl}')
-                    self.end_headers()
-                    return
+                bot_token = discord_cfg.get("botToken")
+                if bot_token and guild_id and not can_flash:
+                    try:
+                        mem_req = urllib.request.Request(
+                            f"https://discord.com/api/v10/guilds/{guild_id}/members/{user_id}",
+                            headers={"Authorization": f"Bot {bot_token}", "User-Agent": "X3NationAuth/1.0"}
+                        )
+                        with urllib.request.urlopen(mem_req) as resp:
+                            member_info = json.loads(resp.read().decode('utf-8'))
+                            in_server = True
+                        can_flash, role_badge, user_lvl, eval_reason = evaluate_user_access(user_info, member_info, cfg)
+                    except Exception:
+                        pass
+
+                avatar_hash = user_info.get("avatar")
+                user = {
+                    "username": username,
+                    "global_name": user_info.get("global_name", username),
+                    "id": user_id,
+                    "avatar": avatar_hash,
+                    "avatar_url": f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_hash}.png?size=128" if avatar_hash else None,
+                    "verified": True,
+                    "level": user_lvl,
+                    "canFlash": bool(can_flash),
+                    "inServer": in_server,
+                    "roleName": role_badge if can_flash else ("X3 Nation Member" if in_server else "Discord Member"),
+                    "authReason": eval_reason
+                }
+
+                self.send_response(302)
+                self.send_header('Location', '/?auth=success')
+                self.send_header('Set-Cookie', self.create_session(user, cfg))
+                self.end_headers()
+                return
 
             except Exception as e:
                 print(f"[!] Discord Auth Error: {e}")
-                self.send_response(302)
-                self.send_header('Location', f'/?auth=error&reason={urllib.parse.quote(str(e))}')
-                self.end_headers()
+                self.redirect_to(f'/?auth=error&reason={urllib.parse.quote(str(e))}')
                 return
 
         return super().do_GET()
 
     def do_POST(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-
-        if path == '/api/config':
-            content_length = int(self.headers.get('Content-Length', 0))
-            body = self.rfile.read(content_length).decode('utf-8')
-            try:
-                data = json.loads(body)
-                cfg = load_config()
-                if "discord" not in cfg:
-                    cfg["discord"] = {}
-                for k in ["clientId", "clientSecret", "guildId", "botToken", "ownerId", "donatorRoleId", "testerRoleId", "requiredRoleId", "roleName", "redirectUri", "requiredLevel"]:
-                    if k in data and data[k] is not None:
-                        cfg["discord"][k] = data[k]
-                save_config(cfg)
-                self.send_response(200)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"success": True}).encode('utf-8'))
-            except Exception as e:
-                self.send_response(400)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"error": str(e)}).encode('utf-8'))
-            return
-
-        self.send_response(404)
-        self.end_headers()
+        # Configuration and token verification are server-only now.
+        # There is intentionally no client-writable config endpoint.
+        self.send_json(403, {"error": "Forbidden"})
 
 def run():
     os.chdir(BASE_DIR)
@@ -536,7 +575,7 @@ def run():
     print("=" * 60)
     print(f"[*] X3 Nation Web Server running at http://localhost:{PORT}/")
     print(f"[*] Discord OAuth2 & BLE Flasher active.")
-    print(f"[*] Access Gating: Level 50+, Donator, Tester, or Staff")
+    print("[*] Discord login required. Firmware gate: Level 5+, Tester, Donator or Staff.")
     print("=" * 60)
     try:
         httpd.serve_forever()
