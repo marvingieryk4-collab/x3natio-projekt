@@ -95,8 +95,8 @@
         cfgClientId: document.getElementById('cfg-client-id'),
         cfgClientSecret: document.getElementById('cfg-client-secret'),
         cfgGuildId: document.getElementById('cfg-guild-id'),
-        cfgRoleId: document.getElementById('cfg-role-id'),
-        cfgRoleName: document.getElementById('cfg-role-name')
+        cfgBotToken: document.getElementById('cfg-bot-token'),
+        cfgRequiredLevel: document.getElementById('cfg-required-level')
     };
 
     /* ============================================================
@@ -222,13 +222,16 @@
         if (authStatus === 'error') {
             const reason = params.get('reason') || 'unbekannt';
             const user = params.get('user') || '';
+            const level = params.get('level') || '0';
             window.history.replaceState({}, document.title, window.location.pathname);
             
             dom.authAlert.className = 'auth-alert-box auth-alert-error';
             dom.authAlert.style.display = 'flex';
             
-            if (reason === 'missing_role') {
-                dom.authAlertMsg.textContent = `Zugriff verweigert (${user}): Dir fehlt die erforderliche Rolle auf dem X3 Nation Discord Server.`;
+            if (reason === 'insufficient_permissions' || reason === 'missing_role') {
+                dom.authAlertMsg.innerHTML = `<strong>Zugriff verweigert (${escapeHtml(user)}):</strong> Du benötigst mindestens <strong>Level 5</strong> (~1h Chat-Aktivität), die <strong>💎 Donator</strong>- oder die <strong>🧪 Tester</strong>-Rolle auf dem X3 Nation Server. (Dein Level: ${escapeHtml(level)})`;
+            } else if (reason === 'not_in_server') {
+                dom.authAlertMsg.innerHTML = `<strong>Zugriff verweigert (${escapeHtml(user)}):</strong> Du bist noch kein Mitglied auf dem X3 Nation Discord Server. Bitte tritt zuerst dem Server bei.`;
             } else if (reason === 'not_configured') {
                 dom.authAlertMsg.textContent = 'Discord OAuth2 ist noch nicht konfiguriert. Bitte öffne das Setup unten oder nutze "Überspringen".';
             } else {
@@ -516,10 +519,15 @@
                 const resp = await fetch('/api/config');
                 if (resp.ok) {
                     const cfg = await resp.json();
-                    dom.cfgClientId.value = cfg.clientId || '';
-                    dom.cfgGuildId.value = cfg.guildId || '';
-                    dom.cfgRoleId.value = cfg.requiredRoleId || '';
-                    dom.cfgRoleName.value = cfg.roleName || '';
+                    if (dom.cfgClientId) dom.cfgClientId.value = cfg.clientId || '';
+                    if (dom.cfgGuildId) dom.cfgGuildId.value = cfg.guildId || '';
+                    if (dom.cfgRequiredLevel) dom.cfgRequiredLevel.value = cfg.requiredLevel || 50;
+                    if (dom.cfgBotToken && cfg.hasBotToken) {
+                        dom.cfgBotToken.placeholder = '●●●●●●●●●●●● (Aktiv geladen)';
+                    }
+                    if (dom.cfgClientSecret && cfg.hasSecret) {
+                        dom.cfgClientSecret.placeholder = '●●●●●●●●●●●● (Bereits gespeichert)';
+                    }
                 }
             } catch (e) {}
         });
@@ -536,11 +544,13 @@
             const payload = {
                 clientId: dom.cfgClientId.value.trim(),
                 guildId: dom.cfgGuildId.value.trim(),
-                requiredRoleId: dom.cfgRoleId.value.trim(),
-                roleName: dom.cfgRoleName.value.trim()
+                requiredLevel: parseInt(dom.cfgRequiredLevel.value.trim(), 10) || 50
             };
             if (dom.cfgClientSecret.value.trim()) {
                 payload.clientSecret = dom.cfgClientSecret.value.trim();
+            }
+            if (dom.cfgBotToken && dom.cfgBotToken.value.trim()) {
+                payload.botToken = dom.cfgBotToken.value.trim();
             }
 
             try {
@@ -551,7 +561,7 @@
                 });
                 if (resp.ok) {
                     dom.modalSettings.classList.remove('active');
-                    alert('Discord Konfiguration erfolgreich gespeichert.');
+                    alert('Discord & Bot Konfiguration erfolgreich synchronisiert und gespeichert.');
                 } else {
                     alert('Fehler beim Speichern der Konfiguration.');
                 }
@@ -565,9 +575,56 @@
        Event Bindings & Initialization
        ============================================================ */
     function initEvents() {
-        // Discord Login Trigger
-        dom.btnLoginDiscord.addEventListener('click', () => {
+        // Discord Login Trigger with robust pre-flight check
+        dom.btnLoginDiscord.addEventListener('click', async () => {
+            if (window.location.protocol === 'file:') {
+                alert('⚠️ Die Website wurde direkt als Datei geöffnet (file://).\n\nBitte starte die Website über "start_all.bat" oder "start_server.bat" und öffne "http://localhost:8080/" im Browser!\n\nAlternativ kannst du unten die Schnelltest-Buttons nutzen.');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/config');
+                if (resp.ok) {
+                    const cfg = await resp.json();
+                    if (!cfg.isConfigured) {
+                        const missing = (cfg.missingFields && cfg.missingFields.length > 0) ? cfg.missingFields.join(', ') : 'Client Secret & Server ID';
+                        dom.authAlert.className = 'auth-alert-box auth-alert-error';
+                        dom.authAlert.style.display = 'flex';
+                        dom.authAlertMsg.innerHTML = `<strong>Discord OAuth2 noch unvollständig:</strong> Es fehlt: <em>${missing}</em>.<br>Trage es im Setup ein oder nutze unten die <strong>Schnelltest-Buttons</strong>!`;
+                        dom.modalSettings.classList.add('active');
+                        return;
+                    }
+                }
+            } catch (err) {
+                console.warn('Config check failed:', err);
+            }
+
             window.location.href = '/api/discord/login';
+        });
+
+        // Dev Quick-Test Buttons
+        document.querySelectorAll('.btn-dev-login').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const role = btn.getAttribute('data-dev-role');
+                if (window.location.protocol === 'file:') {
+                    const badgeMap = {
+                        'level5': 'Level 5 Pilot',
+                        'donator': '💎 Donator',
+                        'tester': '🧪 Tester'
+                    };
+                    const user = {
+                        username: `TestPilot_${role}`,
+                        global_name: `X3 Pilot (${badgeMap[role] || 'Level 5'})`,
+                        verified: true,
+                        level: 5,
+                        roleName: badgeMap[role] || 'Level 5 Pilot'
+                    };
+                    sessionStorage.setItem('x3_session', JSON.stringify(user));
+                    enterCockpit(user);
+                } else {
+                    window.location.href = `/api/discord/dev-login?role=${role}&level=5`;
+                }
+            });
         });
 
         // Skip Button Trigger (Instant Lateral Transition)

@@ -26,7 +26,7 @@
             <div class="glass-card auth-card">
                 <img src="assets/x3_nation_logo.png" alt="X3 Nation" class="brand-hero-logo">
                 <h1 class="auth-title">X3 Nation Portal</h1>
-                <p class="auth-subtitle">Exklusiver Community-Zugang für verifizierte Segway & Ninebot Piloten. Verbinde dich mit Discord für Rollen-Validierung oder fahre direkt fort.</p>
+                <p class="auth-subtitle">Exklusiver Community-Zugang für Segway & Ninebot Piloten. Berechtigt sind Mitglieder ab <strong>Level 5</strong> (~1 Stunde Chat-Aktivität) sowie Inhaber der <strong>💎 Donator</strong>- oder <strong>🧪 Tester</strong>-Rolle.</p>
 
                 <div class="auth-actions">
                     <button type="button" id="btn-discord-login" class="glass-btn glass-btn-primary">
@@ -40,6 +40,16 @@
                         <span>Verifikation überspringen</span>
                         <svg class="svg-icon" viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                     </button>
+                </div>
+
+                <!-- Dev Quick-Test Buttons -->
+                <div id="auth-test-tools" class="auth-test-tools" style="display:flex;flex-direction:column;align-items:center;margin-top:14px;width:100%;padding-top:12px;border-top:1px dashed rgba(255,255,255,0.08);">
+                    <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Schnelltest (Direkt-Login)</span>
+                    <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;width:100%;">
+                        <button type="button" class="glass-btn btn-dev-login" data-dev-role="level5" style="padding:6px 12px;font-size:12px;flex:1;">⚡ Level 5</button>
+                        <button type="button" class="glass-btn btn-dev-login" data-dev-role="donator" style="padding:6px 12px;font-size:12px;flex:1;">💎 Donator</button>
+                        <button type="button" class="glass-btn btn-dev-login" data-dev-role="tester" style="padding:6px 12px;font-size:12px;flex:1;">🧪 Tester</button>
+                    </div>
                 </div>
 
                 <div id="auth-alert" class="auth-alert-box">
@@ -380,10 +390,14 @@
                 </button>
             </div>
 
+            <div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;line-height:1.5;">
+                Freigabe-Kriterien: <strong>Level 50+</strong> (aus der Bot-Datenbank oder Rolle), <strong>💎 Donator</strong>-Rolle oder <strong>🧪 Tester</strong>-Rolle. Synchronisiert automatisch mit der <code>.env</code> des Bots.
+            </div>
+
             <form id="discord-config-form">
                 <div class="input-group">
                     <label class="input-label">Discord Client ID (Application ID)</label>
-                    <input type="text" id="cfg-client-id" class="glass-input" placeholder="z. B. 123456789012345678">
+                    <input type="text" id="cfg-client-id" class="glass-input" placeholder="z. B. 1574073012175634627">
                 </div>
 
                 <div class="input-group">
@@ -393,17 +407,17 @@
 
                 <div class="input-group">
                     <label class="input-label">Discord Server ID (Guild ID)</label>
-                    <input type="text" id="cfg-guild-id" class="glass-input" placeholder="z. B. 987654321098765432">
+                    <input type="text" id="cfg-guild-id" class="glass-input" placeholder="z. B. 123456789012345678">
                 </div>
 
                 <div class="input-group">
-                    <label class="input-label">Erforderliche Rollen-ID (Role ID)</label>
-                    <input type="text" id="cfg-role-id" class="glass-input" placeholder="ID der Rolle, die berechtigt ist">
+                    <label class="input-label">Discord Bot Token (für automatische Rollen-Auflösung)</label>
+                    <input type="password" id="cfg-bot-token" class="glass-input" placeholder="Wird aus .env geladen oder hier eingetragen">
                 </div>
 
                 <div class="input-group">
-                    <label class="input-label">Rollen-Bezeichnung (Display Name)</label>
-                    <input type="text" id="cfg-role-name" class="glass-input" placeholder="z. B. X3 Nation Flasher">
+                    <label class="input-label">Mindest-Level (Standard: 50)</label>
+                    <input type="number" id="cfg-required-level" class="glass-input" placeholder="50" value="50">
                 </div>
 
                 <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px;">

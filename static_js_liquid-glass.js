@@ -235,7 +235,8 @@ void main(){
 
     let W = 0, H = 0, dpr = 1;
     function resize(){
-        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const isMobile = window.innerWidth < 768;
+        dpr = Math.min(window.devicePixelRatio || 1, isMobile ? 1.25 : 2);
         W   = Math.floor(window.innerWidth  * dpr);
         H   = Math.floor(window.innerHeight * dpr);
         canvas.width  = W;

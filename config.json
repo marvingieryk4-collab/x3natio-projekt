@@ -1,11 +1,12 @@
 {
   "discord": {
-    "clientId": "",
+    "clientId": "1574073012175634627",
     "clientSecret": "",
     "redirectUri": "http://localhost:8080/api/discord/callback",
     "guildId": "",
     "requiredRoleId": "",
-    "roleName": "X3 Nation Member"
+    "roleName": "X3 Nation Member",
+    "requiredLevel": 5
   },
   "app": {
     "name": "X3 Nation",
