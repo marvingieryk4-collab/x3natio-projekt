@@ -1,0 +1,16 @@
+{
+    "schemaVersion": 1,
+    "firmware": {
+        "displayName": "X3 Nation MCU with Love",
+        "model": "g3",
+        "enforceModel": true,
+        "type": "MCU",
+        "compatible": [
+            "x3_MCU_AT32"
+        ],
+        "encryption": "encrypted",
+        "md5": {
+            "enc": "d935d637465180c7cb3e91a78fa5d78c"
+        }
+    }
+}
