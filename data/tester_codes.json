@@ -1,0 +1,26 @@
+[
+  {
+    "code": "X3-TEST-BC40",
+    "createdAt": "26.11.2026, 19:23:23",
+    "status": "active",
+    "redeemedBy": null
+  },
+  {
+    "code": "X3-TEST-BBB1",
+    "createdAt": "26.11.2026, 19:23:37",
+    "status": "active",
+    "redeemedBy": null
+  },
+  {
+    "code": "X3-TEST-7F4B",
+    "createdAt": "24.11.2026, 19:15:00",
+    "status": "active",
+    "redeemedBy": null
+  },
+  {
+    "code": "X3-BETA-9A12",
+    "createdAt": "24.11.2026, 18:30:00",
+    "status": "active",
+    "redeemedBy": null
+  }
+]
