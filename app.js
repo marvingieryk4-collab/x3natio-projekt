@@ -181,7 +181,7 @@
                 file: 'firmware/vcu/base_g3_vcu.bin',
                 expectedSize: 61436,
                 encSize: 61440,
-                arch: 'vorwaerz',
+                arch: 'vcu_direct',
                 speedOffsetLabel: '0x00140 / 0x0EDFA',
                 maxCooldown: 300
             },
@@ -192,7 +192,7 @@
                 file: 'firmware/vcu/base_f3_vcu.bin',
                 expectedSize: 61436,
                 encSize: 61440,
-                arch: 'vorwaerz',
+                arch: 'vcu_direct',
                 speedOffsetLabel: '0x00140 / 0x0EDFA',
                 maxCooldown: 300
             },
@@ -519,6 +519,8 @@
             if (diffLog) diffLog.style.display = 'none';
 
             const isZt3 = spec.arch === 'ztr1';
+            const zt3BatteryWrap = document.getElementById('cfw-zt3-battery-standstill-wrap');
+            if (zt3BatteryWrap) zt3BatteryWrap.style.display = isZt3 ? 'block' : 'none';
             if (sym1Label) sym1Label.textContent = isZt3 ? 'Beliebige Bremse (Links/Rechts)' : 'Konfig-Button (F-Taste)';
             if (sym1Arrow) sym1Arrow.textContent = isZt3 ? 'BR*' : 'F';
             if (zt3ProtectWrap) zt3ProtectWrap.style.display = isZt3 ? 'block' : 'none';
@@ -539,7 +541,7 @@
             const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
             const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
 
-            if (spec.arch === 'vorwaerz') {
+            if (spec.arch === 'vcu_direct') {
                 // Read directly from decrypted G3 / F3 binary
                 setVal('cfw-std-eco', base[0x00140]);
                 setVal('cfw-std-drive', base[0x00141]);
@@ -610,6 +612,7 @@
                 setChk('cfw-zt3-double-f-stop', base[0x0e380] === 1);
                 setChk('cfw-zt3-boost-moving', base[0x0e381] === 1);
                 setChk('cfw-panic-restart', base[0x0e38e] === 1);
+                setChk('cfw-zt3-battery-standstill', (base[0x0e38f] & 0x10) !== 0 || true);
                 setChk('cfw-direct-config-switch', false);
 
                 let cruise = 'always';
@@ -620,6 +623,108 @@
 
             this.renderCombo();
             log(`VCU Basis geladen: ${spec.name} (${spec.compat}, ${base.length} Bytes entschlüsselt)`, 'info');
+        },
+
+        computeThrottlePoints(curvature) {
+            const pts = [];
+            for (let i = 0; i < 12; i++) {
+                const x = i / 11.0;
+                if (i === 0) { pts.push(0); continue; }
+                if (i === 11) { pts.push(334); continue; }
+                const exp = curvature > 0 
+                    ? (1.0 - (curvature / 150.0)) 
+                    : (1.0 - (curvature / 75.0));
+                const y = Math.pow(x, exp);
+                pts.push(Math.min(334, Math.max(0, Math.round(y * 334))));
+            }
+            return pts;
+        },
+
+        updateThrottleCurve() {
+            const curveSlider = document.getElementById('cfw-curve-curvature');
+            const rampSlider = document.getElementById('cfw-curve-ramp');
+            const curveVal = document.getElementById('cfw-curve-val');
+            const rampVal = document.getElementById('cfw-ramp-val');
+            const metricInit = document.getElementById('cfw-metric-initial');
+            const metricMid = document.getElementById('cfw-metric-mid');
+            const metricRamp = document.getElementById('cfw-metric-ramp');
+            const pathEl = document.getElementById('cfw-curve-path');
+            const fillEl = document.getElementById('cfw-curve-fill');
+            const pt25 = document.getElementById('cfw-pt-25');
+            const pt50 = document.getElementById('cfw-pt-50');
+            const pt75 = document.getElementById('cfw-pt-75');
+
+            const curvature = parseInt(curveSlider?.value || '0', 10);
+            const rampMs = parseInt(rampSlider?.value || '0', 10);
+
+            if (curveVal) {
+                if (curvature === 0) curveVal.textContent = '0 (Linear)';
+                else if (curvature > 0) curveVal.textContent = `+${curvature} (Aggressiv / Peak)`;
+                else curveVal.textContent = `${curvature} (Sanft / Traktion)`;
+            }
+            if (rampVal) {
+                rampVal.textContent = rampMs === 0 ? '0 ms (Direkt)' : `${rampMs} ms`;
+            }
+            if (metricRamp) {
+                metricRamp.textContent = rampMs === 0 ? '0 ms (Direkt)' : `${rampMs} ms`;
+            }
+
+            // Update Presets Active State
+            const btnInstant = document.getElementById('cfw-preset-instant');
+            const btnLinear = document.getElementById('cfw-preset-linear');
+            const btnProgressive = document.getElementById('cfw-preset-progressive');
+            if (btnInstant) btnInstant.classList.toggle('active', curvature === 70 && rampMs === 0);
+            if (btnLinear) btnLinear.classList.toggle('active', curvature === 0 && rampMs === 0);
+            if (btnProgressive) btnProgressive.classList.toggle('active', curvature === -60 && rampMs === 150);
+
+            // Compute SVG path coordinates (X: 45 -> 380, Y: 180 (0%) -> 20 (100%))
+            const startX = 45, endX = 380, startY = 180, endY = 20;
+            const width = endX - startX;
+            const height = startY - endY;
+
+            const calcY = (t) => {
+                if (t <= 0) return 0;
+                if (t >= 1) return 1;
+                const exp = curvature > 0 
+                    ? (1.0 - (curvature / 150.0)) 
+                    : (1.0 - (curvature / 75.0));
+                return Math.pow(t, exp);
+            };
+
+            const dPoints = [];
+            const steps = 30;
+            for (let s = 0; s <= steps; s++) {
+                const t = s / steps;
+                const yVal = calcY(t);
+                const xCoord = (startX + t * width).toFixed(1);
+                const yCoord = (startY - yVal * height).toFixed(1);
+                dPoints.push(`${s === 0 ? 'M' : 'L'} ${xCoord} ${yCoord}`);
+            }
+
+            const pathData = dPoints.join(' ');
+            if (pathEl) pathEl.setAttribute('d', pathData);
+            if (fillEl) fillEl.setAttribute('d', `${pathData} L ${endX} ${startY} Z`);
+
+            // Key points (25%, 50%, 75%)
+            const y25Val = calcY(0.25);
+            const y50Val = calcY(0.50);
+            const y75Val = calcY(0.75);
+
+            if (metricInit) metricInit.textContent = `${Math.round(y25Val * 100)}%`;
+            if (metricMid) metricMid.textContent = `${Math.round(y50Val * 100)}%`;
+
+            if (pt25) {
+                pt25.setAttribute('cx', (startX + 0.25 * width).toFixed(1));
+                pt25.setAttribute('cy', (startY - y25Val * height).toFixed(1));
+            }
+            if (pt50) {
+                pt50.setAttribute('cx', (startX + 0.50 * width).toFixed(1));
+                pt50.setAttribute('cy', (startY - y50Val * height).toFixed(1));
+            }
+            if (pt75) {
+                pt75.setAttribute('cx', (startX + 0.75 * width).toFixed(1));
+                pt75.setAttribute('cy', (startY - y75Val * height).toFixed(1));
+            }
         },
 
         init() {
@@ -690,6 +795,30 @@
             bindRange('cfw-brake-hold', 'cfw-brake-hold-val', 's');
             bindRange('cfw-boost-timeout', 'cfw-boost-timeout-val', 's');
 
+            // Throttle Curve Sliders & Presets
+            const curveSlider = document.getElementById('cfw-curve-curvature');
+            if (curveSlider) curveSlider.addEventListener('input', () => this.updateThrottleCurve());
+
+            const rampSlider = document.getElementById('cfw-curve-ramp');
+            if (rampSlider) rampSlider.addEventListener('input', () => this.updateThrottleCurve());
+
+            const bindPreset = (id, curvature, ramp) => {
+                const btn = document.getElementById(id);
+                if (btn) {
+                    btn.addEventListener('click', () => {
+                        if (curveSlider) curveSlider.value = String(curvature);
+                        if (rampSlider) rampSlider.value = String(ramp);
+                        this.updateThrottleCurve();
+                        this.invalidateBuild();
+                    });
+                }
+            };
+            bindPreset('cfw-preset-instant', 70, 0);
+            bindPreset('cfw-preset-linear', 0, 0);
+            bindPreset('cfw-preset-progressive', -60, 150);
+
+            this.updateThrottleCurve();
+
             // Invalidate build on any input/select/checkbox change inside tester panel
             const panel = document.getElementById('tab-panel-tester');
             if (panel) {
@@ -747,6 +876,9 @@
             const tunDrv = clamp(parseInt(document.getElementById('cfw-tun-drive')?.value || '40', 10), 1, 127);
             const tunSpt = clamp(parseInt(document.getElementById('cfw-tun-sport')?.value || '80', 10), 1, 127);
 
+            const curvature = clamp(parseInt(document.getElementById('cfw-curve-curvature')?.value || '0', 10), -100, 100);
+            const rampMs = clamp(parseInt(document.getElementById('cfw-curve-ramp')?.value || '0', 10), 0, 300);
+
             const allowMoving = !!document.getElementById('cfw-allow-while-moving')?.checked;
             const panicSec = clamp(parseFloat(document.getElementById('cfw-panic-hold')?.value || '2.0'), 0.2, 10.0);
             const panicRestart = !!document.getElementById('cfw-panic-restart')?.checked;
@@ -755,9 +887,9 @@
             const boostCoolSec = clamp(parseInt(document.getElementById('cfw-boost-cool')?.value || '120', 10), 0, spec.maxCooldown);
             const cruiseMode = document.getElementById('cfw-cruise-mode')?.value || 'tuning_only';
 
-            if (spec.arch === 'vorwaerz') {
+            if (spec.arch === 'vcu_direct') {
                 // ========================================================
-                // G3 & F3 VORWAERZ VCU REAL ARM THUMB-2 PATCHER
+                // G3 & F3 VCU REAL ARM THUMB-2 PATCHER
                 // ========================================================
                 const toggleOnCombo = !!document.getElementById('cfw-toggle-on-combo')?.checked;
                 const unlockFlash = !!document.getElementById('cfw-unlock-flash')?.checked;
@@ -842,6 +974,14 @@
                     this.writeBytes(patched, 0x0a6ba, [0x02, 0xe0]); // B +4 (Disabled)
                 }
                 patchNotes.push(`Tempomat @0x0a6ba: ${cruiseMode}`);
+
+                // 8. Throttle Ramp Curve & Responsiveness
+                const rampTicksG3 = Math.max(1, Math.round(rampMs / 10));
+                this.writeU16(patched, 0x0a6b0, rampTicksG3);
+                patched[0x0edf0] = (curvature + 128) & 0xff;
+                patched[0x0edf1] = (rampMs / 5) & 0xff;
+                const initTorqueG3 = Math.round((curvature > 0 ? Math.pow(0.25, 1.0 - curvature / 150.0) : Math.pow(0.25, 1.0 - curvature / 75.0)) * 100);
+                patchNotes.push(`Gasannahme @0x0a6b0/0x0edf0: Krümmung=${curvature > 0 ? '+' + curvature : curvature} (25% Gas -> ${initTorqueG3}%), Ramp-Filter=${rampMs}ms`);
             } else {
                 // ========================================================
                 // ZT3 ZTR1 CONFIG-BLOCK + ARM THUMB-2 PATCHER
@@ -917,7 +1057,37 @@
                 }
                 patchNotes.push(`ZT3 Tempomat @0x0ef22: ${cruiseMode}`);
 
-                // 7. MANDATORY: Recompute ZT3 ZTR1 CRC-32 over 0x0e368..0x0e3a7 and write @ 0x0e360
+                // 7. ZT3 Standstill Battery Hack (Tuning Profile Only Gate)
+                const batteryStandstill = !!document.getElementById('cfw-zt3-battery-standstill')?.checked;
+                if (batteryStandstill) {
+                    // Bit 4 (0x10): Standstill Battery Active | Bit 5 (0x20): Profile Gate
+                    patched[0x0e38f] |= 0x30;
+                    // Telemetry hook @ 0x0e87c: verify profile [0x20007810] == 1 before replacing 0 with battery %
+                    this.writeBytes(patched, 0x0e87c, [
+                        0x09, 0x49, // LDR r1, [pc, #0x24] (resolves 0x20007810 at 0x0e8a4)
+                        0x08, 0x78, // LDRB r0, [r1, #0]
+                        0x01, 0x28, // CMP r0, #1
+                        0x05, 0xd1  // BNE +10 (0x0e88e: jumps straight to standard single '0' output)
+                    ]);
+                    patchNotes.push(`ZT3 Dashboard Hack @0x0e38f/0x0e87c: Akku-% im Stand NUR im Tuning-Profil aktiv (StVO zeigt saubere einzelne 0 km/h)`);
+                } else {
+                    patched[0x0e38f] &= ~0x30;
+                    this.writeBytes(patched, 0x0e87c, [0x1a, 0x49, 0x08, 0x88, 0x40, 0xf0, 0x80, 0x00]);
+                    patchNotes.push(`ZT3 Dashboard Hack @0x0e38f: Akku-% im Stand = Deaktiviert`);
+                }
+
+                // 8. ZT3 Real 12-Point Throttle Table & Ramp Ticks @ 0x0dfec / 0x0e034
+                const curve12 = this.computeThrottlePoints(curvature);
+                for (let i = 0; i < 12; i++) {
+                    this.writeU32(patched, 0x0dfec + (i * 4), curve12[i]);
+                }
+                const rampTicksZT3 = Math.max(1, Math.round(rampMs / 15));
+                for (let i = 0; i < 12; i++) {
+                    patched[0x0e034 + i] = Math.min(255, patched[0x0e034 + i] + rampTicksZT3 - 1);
+                }
+                patchNotes.push(`ZT3 12-Punkt Gasannahme @0x0dfec: Krümmung=${curvature > 0 ? '+' + curvature : curvature} (25% Gas -> ${Math.round(curve12[3] / 334 * 100)}%), Filter=${rampMs}ms`);
+
+                // 9. MANDATORY: Recompute ZT3 ZTR1 CRC-32 over 0x0e368..0x0e3a7 and write @ 0x0e360
                 const newCrc = this.crc32(patched.subarray(0x0e368, 0x0e3a8));
                 this.writeU32(patched, 0x0e360, newCrc);
                 patchNotes.push(`ZTR1 CRC-32 @0x0e360 neu berechnet: 0x${newCrc.toString(16).padStart(8, '0')}`);
@@ -979,26 +1149,45 @@
         },
 
         async downloadCustomCFW() {
-            if (!this.generatedEncryptedBytes || !this.generatedModelId) {
-                alert('Bitte zuerst auf "CFW Patchen & TEA Verschlüsseln" klicken.');
-                return;
+            if (!this.generatedEncryptedBytes || this.generatedModelId !== this.selectedModel) {
+                await this.buildCFW();
+                if (!this.generatedEncryptedBytes) return;
             }
             const spec = this.MODELS[this.generatedModelId];
+
+            // Compute bit-exact MD5 checksum of FIRM.bin.enc
+            let encMd5 = '';
+            try {
+                if (typeof md5js === 'function') {
+                    const raw = md5js(this.generatedEncryptedBytes);
+                    encMd5 = Array.from(raw).map(b => b.toString(16).padStart(2, '0')).join('');
+                }
+            } catch (e) {
+                console.warn('MD5 calc error:', e);
+            }
+
             if (typeof JSZip !== 'undefined') {
                 const zip = new JSZip();
                 zip.file('FIRM.bin.enc', this.generatedEncryptedBytes);
-                zip.file('info.json', JSON.stringify({
+                
+                const infoObj = {
                     schemaVersion: 1,
                     firmware: {
-                        displayName: `X3 Nation CFW ${spec.id.toUpperCase()}`,
+                        displayName: `X3 Nation ${spec.name} VCU`,
                         model: spec.id,
                         enforceModel: true,
                         type: 'VCU',
                         compatible: [spec.compat],
                         encryption: 'encrypted'
                     }
-                }, null, 2));
-                zip.file('x3_cfw_report.txt', this.lastPatchSummary);
+                };
+                if (encMd5) {
+                    infoObj.firmware.md5 = { enc: encMd5 };
+                }
+
+                zip.file('info.json', JSON.stringify(infoObj, null, 2));
+                zip.file('params.txt', this.lastPatchSummary || `X3 Nation CFW ${spec.name}`);
+                
                 const blob = await zip.generateAsync({ type: 'blob' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -1006,7 +1195,7 @@
                 a.download = `x3nation_${spec.id}_vcu_cfw.zip`;
                 a.click();
                 setTimeout(() => URL.revokeObjectURL(url), 5000);
-                log(`Download gestartet: x3nation_${spec.id}_vcu_cfw.zip`, 'success');
+                log(`Download gestartet: x3nation_${spec.id}_vcu_cfw.zip (ZIP mit FIRM.bin.enc & info.json)`, 'success');
             } else {
                 const blob = new Blob([this.generatedEncryptedBytes], { type: 'application/octet-stream' });
                 const url = URL.createObjectURL(blob);
